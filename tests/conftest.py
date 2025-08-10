@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncGenerator, Generator
 
 import pytest
@@ -6,11 +7,16 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.lib.db.base import Base
+from alembic import command
+from alembic.config import Config
 from app.lib.db.session import DATABASE_URL, get_session
 from app.main import app
-from app.ops.entities.tree_node import TreeNode
-from tests.factories import TreeNodeFactory
+
+# Reduce logging noise during tests
+logging.getLogger("asyncio").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("faker.factory").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 test_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
 
@@ -24,12 +30,19 @@ def event_loop() -> Generator:
 
 @pytest.fixture(scope="function")
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    async with test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    # Run migrations instead of creating tables directly
+    alembic_cfg = Config("alembic.ini")
+    # Use synchronous URL for Alembic
+    sync_url = DATABASE_URL.replace("+asyncpg", "")
+    alembic_cfg.set_main_option("sqlalchemy.url", sync_url)
 
-    async with AsyncSession(test_engine) as session:
+    # Run migrations
+    command.downgrade(alembic_cfg, "base")
+    command.upgrade(alembic_cfg, "head")
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as session:
         yield session
+        await session.rollback()
         await session.close()
 
 
@@ -45,31 +58,3 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
-
-
-class TreeBuilder:
-    """Simple builder for test trees."""
-
-    def __init__(self, db_session: AsyncSession):
-        self.session = db_session
-
-    async def root(self, label: str = "Root") -> TreeNode:
-        """Create a root node."""
-        node = await TreeNodeFactory.create_async(self.session, label=label)
-        return node
-
-    async def child(self, parent, label: str = None):
-        """Create a child node."""
-        return await TreeNodeFactory.create_async(
-            self.session,
-            label=label or f"{parent.label}-child",
-            parent_id=parent.id,
-            root_id=parent.root_id or parent.id,
-            depth=parent.depth + 1,
-        )
-
-
-@pytest.fixture
-def tree(db_session: AsyncSession) -> TreeBuilder:
-    """Simple tree builder for tests."""
-    return TreeBuilder(db_session)
