@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
+    # Redis (optional)
+    redis_url: str | None = os.getenv("REDIS_URL", None)
+    redis_key_prefix: str = os.getenv("REDIS_KEY_PREFIX", "tree_ops:")
+
     model_config = {"env_file": ".env"}
 
 

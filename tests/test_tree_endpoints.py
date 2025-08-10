@@ -34,7 +34,7 @@ async def test_get_trees(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             """
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         (1, 1, NULL, 'default', 'Plan the perfect weekend trip to Portland', 1000),
         (2, 2, NULL, 'default', 'Train squirrels to deliver mail', 2000)
     """
@@ -79,7 +79,7 @@ async def test_simple_forest(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             """
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         -- Root 1 and its children
         (1, 1, NULL, 'default', 'Plan weekend trip', 1000),
         (2, 1, 1, 'default', 'Book flights', 1000),
@@ -135,7 +135,7 @@ async def test_deep_tree(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             f"""
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         {rows}
     """
         )
@@ -181,7 +181,7 @@ async def test_wide_tree(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             f"""
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         {rows}
     """
         )
@@ -230,7 +230,7 @@ async def test_multi_root_forest(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             f"""
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         {','.join(rows)}
     """
         )
@@ -255,7 +255,7 @@ async def test_complex_tree_structure(client: AsyncClient, db_session: AsyncSess
     await db_session.execute(
         text(
             """
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         -- Root
         (1, 1, NULL, 'default', 'Master Plan', 1000),
 
@@ -330,7 +330,7 @@ async def test_unbalanced_forest(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             """
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         -- Tiny tree (just root)
         (1, 1, NULL, 'default', 'Quick Task', 1000),
 
@@ -375,7 +375,7 @@ async def test_forest_ordering(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(
         text(
             """
-        INSERT INTO tree_nodes (id, root_id, parent_id, org_key, label, pos) VALUES
+        INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
         -- Insert out of order to test sorting
         (3, 3, NULL, 'default', 'Third Root', 3000),
         (1, 1, NULL, 'default', 'First Root', 1000),
@@ -405,3 +405,180 @@ async def test_forest_ordering(client: AsyncClient, db_session: AsyncSession):
         {"id": 2, "label": "Second Root", "children": []},
         {"id": 3, "label": "Third Root", "children": []},
     ]
+
+
+@pytest.mark.asyncio
+async def test_bulk_insert_simple_tree(client: AsyncClient, db_session: AsyncSession):
+    """Test bulk insert with a simple tree structure."""
+    # Clear any existing data
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+    await db_session.commit()
+
+    # Create a simple tree with client-provided IDs
+    nodes = [
+        {"id": 100, "label": "root", "parentId": None, "rootId": 100},
+        {"id": 101, "label": "child1", "parentId": 100, "rootId": 100},
+        {"id": 102, "label": "child2", "parentId": 100, "rootId": 100},
+        {"id": 103, "label": "grandchild", "parentId": 101, "rootId": 100},
+    ]
+
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+    assert response.json() == {"created": 4}
+
+    # Verify the tree structure
+    response = await client.get("/api/tree")
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 1
+    assert trees[0]["id"] == 100
+    assert trees[0]["label"] == "root"
+    assert len(trees[0]["children"]) == 2
+
+    # Verify child structure
+    children = {c["id"]: c for c in trees[0]["children"]}
+    assert 101 in children
+    assert 102 in children
+    assert len(children[101]["children"]) == 1
+    assert children[101]["children"][0]["id"] == 103
+
+
+@pytest.mark.asyncio
+async def test_bulk_insert_multiple_roots(client: AsyncClient, db_session: AsyncSession):
+    """Test bulk insert with multiple root nodes."""
+    # Clear any existing data
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+    await db_session.commit()
+
+    nodes = [
+        {"id": 200, "label": "root1", "parentId": None, "rootId": 200},
+        {"id": 201, "label": "child1", "parentId": 200, "rootId": 200},
+        {"id": 300, "label": "root2", "parentId": None, "rootId": 300},
+        {"id": 301, "label": "child2", "parentId": 300, "rootId": 300},
+    ]
+
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+    assert response.json() == {"created": 4}
+
+    # Verify we have two trees
+    response = await client.get("/api/tree")
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 2
+    assert {t["id"] for t in trees} == {200, 300}
+
+
+@pytest.mark.asyncio
+async def test_bulk_insert_empty_list(client: AsyncClient, db_session: AsyncSession):
+    """Test bulk insert with empty list."""
+    response = await client.post("/api/tree/bulk", json=[])
+    assert response.status_code == 201
+    assert response.json() == {"created": 0}
+
+
+@pytest.mark.asyncio
+async def test_bulk_insert_large_tree(client: AsyncClient, db_session: AsyncSession):
+    """Test bulk insert with a larger tree structure."""
+    # Clear any existing data
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+    await db_session.commit()
+
+    # Create a tree with 100 nodes
+    nodes = []
+    node_id = 1000
+
+    # Create root
+    nodes.append({"id": node_id, "label": f"node_{node_id}", "parentId": None, "rootId": node_id})
+    root_id = node_id
+    node_id += 1
+
+    # Create 10 children of root
+    level1_ids = []
+    for i in range(10):
+        nodes.append({"id": node_id, "label": f"node_{node_id}", "parentId": root_id, "rootId": root_id})
+        level1_ids.append(node_id)
+        node_id += 1
+
+    # Create 9 children for each level 1 node (total 90 more nodes)
+    for parent in level1_ids:
+        for i in range(9):
+            nodes.append({"id": node_id, "label": f"node_{node_id}", "parentId": parent, "rootId": root_id})
+            node_id += 1
+
+    assert len(nodes) == 101
+
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+    assert response.json() == {"created": 101}
+
+    # Verify the tree structure
+    response = await client.get("/api/tree")
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 1
+    assert trees[0]["id"] == 1000
+    assert len(trees[0]["children"]) == 10
+
+    # Verify grandchildren
+    for child in trees[0]["children"]:
+        assert len(child["children"]) == 9
+
+
+@pytest.mark.asyncio
+async def test_delete_org_trees(client: AsyncClient, db_session: AsyncSession):
+    """Test deleting all trees for an org."""
+    # Clear any existing data
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+    await db_session.commit()
+
+    # Create trees for multiple orgs
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO tree_nodes (id, root_id, parent_id, org_id, label, pos) VALUES
+            -- Org1 trees
+            (1, 1, NULL, 'org1', 'Org1 Tree1', 1000),
+            (2, 1, 1, 'org1', 'Org1 Child1', 1000),
+            (3, 3, NULL, 'org1', 'Org1 Tree2', 2000),
+
+            -- Org2 trees
+            (4, 4, NULL, 'org2', 'Org2 Tree1', 1000),
+            (5, 4, 4, 'org2', 'Org2 Child1', 1000),
+
+            -- Default org trees
+            (6, 6, NULL, 'default', 'Default Tree1', 1000),
+            (7, 6, 6, 'default', 'Default Child1', 1000)
+        """
+        )
+    )
+    await db_session.commit()
+
+    # Verify org1 has trees
+    response = await client.get("/api/tree", headers={"org-id": "org1"})
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 2
+
+    # Delete org1 trees
+    response = await client.delete("/api/tree", headers={"org-id": "org1"})
+    assert response.status_code == 204
+
+    # Verify org1 trees are gone
+    response = await client.get("/api/tree", headers={"org-id": "org1"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+    # Verify org2 trees still exist
+    response = await client.get("/api/tree", headers={"org-id": "org2"})
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 1
+    assert trees[0]["label"] == "Org2 Tree1"
+
+    # Verify default org trees still exist
+    response = await client.get("/api/tree")
+    assert response.status_code == 200
+    trees = response.json()
+    assert len(trees) == 1
+    assert trees[0]["label"] == "Default Tree1"

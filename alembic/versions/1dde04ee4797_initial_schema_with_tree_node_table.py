@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), nullable=False),
         sa.Column("root_id", sa.BigInteger(), nullable=False),
         sa.Column("parent_id", sa.BigInteger(), nullable=True),
-        sa.Column("org_key", sa.String(), nullable=False, server_default="default"),
+        sa.Column("org_id", sa.String(), nullable=False, server_default="default"),
         sa.Column("label", sa.String(), nullable=False),
         sa.Column("pos", sa.BigInteger(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -42,7 +42,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_tree_nodes_parent_pos", "tree_nodes", ["parent_id", "pos"], unique=False)
     op.create_index("ix_tree_nodes_root_updated", "tree_nodes", ["root_id", "updated_at"], unique=False)
-    op.create_index("ix_tree_nodes_org_root", "tree_nodes", ["org_key", "root_id"], unique=False)
+    op.create_index("ix_tree_nodes_org_root", "tree_nodes", ["org_id", "root_id"], unique=False)
 
     # Create PL/pgSQL functions for building tree JSON
     #
@@ -93,7 +93,7 @@ def upgrade() -> None:
         $$ LANGUAGE plpgsql STABLE;
 
         -- Function to build entire forest (all trees) for an organization
-        CREATE OR REPLACE FUNCTION build_forest_json(p_org_key TEXT)
+        CREATE OR REPLACE FUNCTION build_forest_json(p_org_id TEXT)
         RETURNS TEXT AS $$
         BEGIN
             RETURN (
@@ -105,7 +105,7 @@ def upgrade() -> None:
                 )
                 FROM tree_nodes t
                 WHERE t.parent_id IS NULL
-                  AND t.org_key = p_org_key
+                  AND t.org_id = p_org_id
             );
         END;
         $$ LANGUAGE plpgsql STABLE;

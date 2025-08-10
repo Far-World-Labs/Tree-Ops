@@ -14,7 +14,7 @@ class TreeNode(Base):
     parent_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("tree_nodes.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    org_key: Mapped[str] = mapped_column(String, nullable=False, default="default", index=True)
+    org_id: Mapped[str] = mapped_column(String, nullable=False, default="default", index=True)
     label: Mapped[str] = mapped_column(String, nullable=False)
     pos: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
