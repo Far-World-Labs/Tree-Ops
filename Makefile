@@ -36,3 +36,7 @@ lint:
 # Format code
 format:
 	uv run ruff format .
+
+# Run performance tests
+perf:
+	uv run python scripts/tree-perf

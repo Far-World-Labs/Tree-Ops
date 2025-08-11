@@ -5,11 +5,10 @@ requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.16.4",
   "anyio>=4.7.0",
-  "asyncpg>=0.30.0",
   "fastapi>=0.116.1",
   "hiredis>=3.2.1",
   "lexorank>=0.1.1",
-  "molotov>=2.6",
+  "numpy>=1.26.0",
   "psutil>=7.0.0",
   "psycopg2-binary>=2.9.10",
   "pydantic>=2.11.7",

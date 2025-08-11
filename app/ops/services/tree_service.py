@@ -105,7 +105,14 @@ class TreeService:
             else:
                 root_id = await get_parent_root_id(self.session, command.parent_id)
 
+            # Generate timestamp-based ID to avoid collisions
+            import random
+            import time
+
+            timestamp_id = int(time.time() * 1000000) + random.randint(0, 999)
+
             node = TreeNode(
+                id=timestamp_id,
                 label=command.label,
                 parent_id=command.parent_id,
                 org_id=self.org_id,

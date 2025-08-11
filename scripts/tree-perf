@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Performance testing for tree operations."""
+
+import asyncio
+import sys
+from pathlib import Path
+
+from app.ops.perf.runner import PerformanceRunner, TestScenario
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+
+async def main():
+    """Run performance tests."""
+
+    runner = PerformanceRunner()
+
+    # Define test scenarios
+    scenarios = [
+        # Deep tree degradation curve (more granular)
+        TestScenario("deep_10", "deep_10", 10, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_100", "deep_100", 100, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_500", "deep_500", 500, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_1k", "deep_1k", 1000, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_1.3k", "deep_1300", 1300, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_1.4k", "deep_1400", 1400, 1, "deep", 10, 5, 0.9),
+        # Wide tree breakdown
+        TestScenario("wide_1k", "wide_1k", 1000, 1, "wide", 20, 5, 0.9),
+        TestScenario("wide_10k", "wide_10k", 10000, 1, "wide", 20, 5, 0.9),
+        TestScenario("wide_20k", "wide_20k", 20000, 1, "wide", 20, 5, 0.9),
+        TestScenario("wide_50k", "wide_50k", 50000, 1, "wide", 20, 5, 0.9),
+        # Forest optimization (smaller scale for better curve)
+        TestScenario("forest_single", "forest_1", 1000, 1, "balanced", 20, 5, 0.9),
+        TestScenario("forest_10", "forest_10", 1000, 10, "balanced", 20, 5, 0.9),
+        TestScenario("forest_50", "forest_50", 1000, 50, "balanced", 20, 5, 0.9),
+        TestScenario("forest_100", "forest_100", 1000, 100, "balanced", 20, 5, 0.9),
+        TestScenario("forest_200", "forest_200", 1000, 200, "balanced", 20, 5, 0.9),
+        # Read/Write interference patterns
+        TestScenario("read_only", "rw_r100", 1000, 1, "balanced", 20, 5, 1.0),
+        TestScenario("mostly_read", "rw_r90", 1000, 1, "balanced", 20, 5, 0.9),
+        TestScenario("balanced_rw", "rw_r50", 1000, 1, "balanced", 20, 5, 0.5),
+        TestScenario("mostly_write", "rw_r10", 1000, 1, "balanced", 20, 5, 0.1),
+        TestScenario("write_only", "rw_r0", 1000, 1, "balanced", 20, 5, 0.0),
+        # Write pattern impact (50% read/write to see interference)
+        TestScenario("insert_only", "wp_insert", 1000, 1, "balanced", 20, 5, 0.5, "simple"),
+        TestScenario("with_moves", "wp_move", 1000, 1, "balanced", 20, 5, 0.5, "move"),
+        # Concurrent writer stress (more writers = more contention)
+        TestScenario("low_contention", "cont_5", 1000, 1, "balanced", 5, 5, 0.5),
+        TestScenario("med_contention", "cont_20", 1000, 1, "balanced", 20, 5, 0.5),
+        TestScenario("high_contention", "cont_50", 1000, 1, "balanced", 50, 5, 0.5),
+    ]
+
+    # Run tests
+    results = await runner.run_suite(scenarios)
+
+    # Display results
+    runner.display_results(results)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
