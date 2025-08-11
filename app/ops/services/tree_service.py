@@ -115,43 +115,18 @@ def build_paths_for_bulk_insert(nodes: list[BulkNodeRequest]) -> dict[int, NodeT
     return node_tree_info
 
 
-async def find_root_nodes_ordered(session: AsyncSession) -> list[TreeNode]:
-    stmt = select(TreeNode).where(TreeNode.parent_id.is_(None)).order_by(TreeNode.pos, TreeNode.id)
-
-    result = await session.execute(stmt)
-    return list(result.scalars().all())
-
-
-async def get_next_position(session: AsyncSession, parent_id: int | None) -> int:
-    if parent_id is None:
-        where_clause = TreeNode.parent_id.is_(None)
-    else:
-        where_clause = TreeNode.parent_id == parent_id
-
-    stmt = select(func.coalesce(func.max(TreeNode.pos), cast(literal(0), TreeNode.pos.type))).where(where_clause)
-
-    result = await session.execute(stmt)
-    max_pos = result.scalar_one()
-
-    return max_pos + 1000
-
-
-async def get_parent_root_id(session: AsyncSession, parent_id: int) -> int:
-    stmt = select(TreeNode.root_id).where(TreeNode.id == parent_id)
-    result = await session.execute(stmt)
-
-    root_id = result.scalar_one_or_none()
-    if root_id is None:
-        raise ValueError(f"Parent node {parent_id} not found")
-
-    return root_id
-
-
 # SQL query for fast forest materialization using window functions
-# This avoids all recursion and function calls by using a clever trick:
-# 1. Materialize path arrays on write (path_ids, path_pos)
-# 2. Use window functions to build JSON in a single ordered pass
-# 3. String concatenation to assemble the final JSON
+# Algorithm:
+# 1. Order nodes by path_pos (ensures parents before children)
+# 2. Use LEAD() to peek ahead at next node's depth
+# 3. When depth decreases, close JSON brackets accordingly
+# 4. Use STRING_AGG to concatenate all tokens in order
+#
+# Performance benefits:
+# - Single sequential scan (no recursion)
+# - O(N) complexity
+# - No function call overhead
+# - Works for any tree depth
 
 FOREST_JSON_QUERY = """
 WITH roots AS (
@@ -218,38 +193,6 @@ SELECT
 FROM roots r
 LEFT JOIN per_root pr USING (root_id)
 """
-
-
-def explain_forest_json_algorithm():
-    """
-    Explains how the window function JSON building works.
-
-    The key insight: We visit nodes in path order (parent before children),
-    and use LEAD() to peek ahead. When we see the depth decrease, we know
-    we need to close JSON brackets.
-
-    Example for tree A->B->C, A->D:
-    Row  Node  Depth  NextDepth  Brackets to close
-    1    A     1      2          0 (child follows, keep open)
-    2    B     2      3          0 (child follows, keep open)
-    3    C     3      2          1 (depth drops by 1, close C with ]})
-    4    D     2      0          2 (last node, close D and A with ]}]})
-
-    The algorithm:
-    1. Order nodes by path_pos (ensures parents before children)
-    2. For each node, look ahead to next node's depth
-    3. If depth decreases, close (current_depth - next_depth) brackets
-    4. Add commas between siblings (not after parents)
-    5. STRING_AGG concatenates all tokens in order
-
-    Performance benefits:
-    - Single sequential scan (no recursion)
-    - O(N) complexity
-    - No function call overhead
-    - Excellent cache locality
-    - Works for any tree depth
-    """
-    pass
 
 
 async def fetch_forest_json(session: AsyncSession, org_id: str) -> str:
