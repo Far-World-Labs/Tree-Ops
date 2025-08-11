@@ -154,6 +154,66 @@ PostgreSQL's recursive CTEs cannot use aggregate functions (like jsonb_agg) in t
 - Bulk import: Add efficient bulk import to complement existing export
 - Versioning: Implement tree versioning for history tracking if required
 
+## Performance Testing
+
+### Running Performance Tests
+
+```bash
+# Ensure the server is running
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5430/treeops uv run uvicorn app.main:app
+
+# Run performance tests
+uv run scripts/tree-perf
+```
+
+### Performance Results
+
+```
+                                                 Performance Test Results
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━━━━┳━━━━━━┳━━━━━┳━━━━━━┓
+┃ Scenario        ┃  Nodes ┃ Depth ┃ Trees ┃  R:W  ┃   RPS ┃ Errors ┃  P50 ┃  P95 ┃  P99 ┃ ms/node ┃  IDX ┃ SEQ ┃ CPU% ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━━━━╇━━━━━━╇━━━━━╇━━━━━━┩
+│ deep_100        │    100 │   100 │     1 │ 90:10 │ 235.6 │      0 │   30 │  111 │  194 │    1.11 │ 2411 │   1 │    2 │
+│ deep_1k         │   1000 │  1000 │     1 │ 90:10 │ 105.1 │      0 │   96 │  138 │  182 │    0.14 │ 1257 │   0 │    1 │
+│ deep_5k         │   5000 │  5000 │     1 │ 90:10 │  16.3 │      0 │  638 │  907 │  928 │    0.18 │  174 │   0 │    3 │
+│ deep_10k        │  10000 │ 10000 │     1 │ 90:10 │   7.2 │      0 │ 1433 │ 1803 │ 1994 │    0.18 │   92 │   0 │    4 │
+│ deep_20k        │  20000 │ 20000 │     1 │ 90:10 │   3.7 │      0 │ 2325 │ 3334 │ 3518 │    0.17 │   52 │   0 │    2 │
+│ deep_50k        │  50000 │ 50000 │     1 │ 90:10 │   1.5 │      0 │ 5449 │ 7574 │ 8059 │    0.15 │   16 │  14 │    2 │
+│ wide_1k         │   1000 │     2 │     1 │ 90:10 │ 171.3 │      0 │   93 │  255 │  347 │    0.25 │ 1725 │   0 │    1 │
+│ wide_5k         │   5000 │     2 │     1 │ 90:10 │ 128.3 │      0 │  133 │  290 │  360 │    0.06 │ 4303 │   0 │    1 │
+│ wide_10k        │  10000 │     2 │     1 │ 90:10 │ 102.8 │      0 │  173 │  313 │  376 │    0.03 │ 5019 │   0 │    2 │
+│ wide_50k        │  50000 │     2 │     1 │ 90:10 │  47.0 │      0 │  408 │  671 │  742 │    0.01 │ 4476 │   0 │    3 │
+│ wide_100k       │ 100000 │     2 │     1 │ 90:10 │  25.7 │      0 │  758 │ 1011 │ 1153 │    0.01 │ 3155 │ 131 │    2 │
+│ wide_500k       │ 500000 │     2 │     1 │ 90:10 │   4.8 │      0 │ 3559 │ 5871 │ 6141 │    0.01 │ 5044 │  34 │    3 │
+│ forest_single   │   5000 │     8 │     1 │ 90:10 │ 121.6 │      0 │  140 │  289 │  376 │    0.06 │ 3197 │   0 │    4 │
+│ forest_10       │   5000 │     8 │    10 │ 90:10 │ 118.6 │      0 │  141 │  293 │  401 │    0.06 │ 3189 │   0 │    2 │
+│ forest_50       │   5000 │     8 │    50 │ 90:10 │ 123.5 │      0 │  137 │  283 │  350 │    0.06 │ 4186 │   0 │    1 │
+│ forest_100      │   5000 │     8 │   100 │ 90:10 │ 123.4 │      0 │  139 │  289 │  358 │    0.06 │ 5137 │   0 │    2 │
+│ forest_200      │   5000 │     8 │   200 │ 90:10 │ 130.7 │      0 │  126 │  301 │  373 │    0.06 │ 2265 │   0 │    2 │
+│ read_only       │   5000 │     8 │     1 │ 100:0 │ 129.4 │      0 │  132 │  273 │  305 │    0.05 │ 2255 │   0 │    2 │
+│ mostly_read     │   5000 │     8 │     1 │ 90:10 │ 127.5 │      0 │  134 │  299 │  344 │    0.06 │ 2247 │   0 │    2 │
+│ balanced_rw     │   5000 │     8 │     1 │ 50:50 │ 120.6 │      0 │  140 │  328 │  362 │    0.07 │ 1185 │   0 │    2 │
+│ mostly_write    │   5000 │     8 │     1 │ 10:90 │ 142.1 │      0 │  113 │  305 │  380 │    0.06 │ 1401 │   0 │    1 │
+│ write_only      │   5000 │     8 │     1 │ 0:100 │ 142.2 │      0 │  106 │  315 │  420 │    0.06 │ 5365 │   0 │    2 │
+│ insert_simple   │   5000 │     8 │     1 │ 50:50 │ 134.0 │      0 │  127 │  303 │  338 │    0.06 │ 2339 │   0 │    2 │
+│ insert_deep     │   5000 │     8 │     1 │ 50:50 │ 125.1 │      0 │  125 │  318 │  388 │    0.06 │ 3220 │   0 │    2 │
+│ insert_mixed    │   5000 │     8 │     1 │ 50:50 │ 119.0 │      0 │  128 │  329 │  412 │    0.07 │ 1612 │   0 │    4 │
+│ low_contention  │   5000 │     8 │     1 │ 50:50 │ 251.8 │      0 │   19 │   27 │   67 │    0.01 │ 2370 │   0 │    2 │
+│ med_contention  │   5000 │     8 │     1 │ 50:50 │ 143.0 │      0 │  112 │  315 │  387 │    0.06 │ 9053 │   0 │    1 │
+│ high_contention │   5000 │     8 │     1 │ 50:50 │ 218.5 │      0 │  186 │  453 │  607 │    0.09 │ 3170 │   0 │    1 │
+└─────────────────┴────────┴───────┴───────┴───────┴───────┴────────┴──────┴──────┴──────┴─────────┴──────┴─────┴──────┘
+```
+
+### Performance Scaling
+
+#### Deep Tree Processing
+![Deep Tree RPS vs Node Count](../../docs/rps_vs_nodes_deep.png)
+![Deep Tree Latency vs Node Count](../../docs/latency_vs_nodes_deep.png)
+
+#### Wide Tree Processing
+![Wide Tree RPS vs Node Count](../../docs/rps_vs_nodes_wide.png)
+![Wide Tree Latency vs Node Count](../../docs/latency_vs_nodes_wide.png)
+
 ## Performance Characteristics
 
 - GET /api/tree: O(n) where n is total nodes, single database round-trip

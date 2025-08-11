@@ -1,6 +1,6 @@
-# Agentic Storage API
+# Tree Operations Service
 
-FastAPI service for agentic planning and state management with hierarchical data structures.
+High-performance hierarchical tree storage API built with FastAPI and PostgreSQL, optimized for deep trees and large-scale operations.
 
 ## Setup
 
@@ -45,15 +45,22 @@ make migration msg="Description here"
 
 ```
 app/
-├── ops/           # Planning and state APIs
-│   ├── entities/  # Database models
-│   ├── routes/    # API endpoints
-│   ├── services/  # Business logic
+├── ops/           # Tree operations APIs
+│   ├── entities/  # Database models (TreeNode)
+│   ├── routes/    # API endpoints (tree, stats)
+│   ├── services/  # Business logic (TreeService)
+│   ├── perf/      # Performance testing utilities
+│   ├── stats/     # Metrics collection
 │   └── schemas.py # Request/response models
 ├── lib/           # Shared utilities
 │   └── db/        # Database configuration
 └── middleware.py  # Request tracing and timing
 
 tests/             # Integration tests
-└── factories/     # Test data factories
+scripts/           # Utility scripts
+└── tree-perf      # Performance test runner
 ```
+
+## Performance Testing
+
+See [app/ops/README.md](app/ops/README.md#performance-testing) for detailed performance test results and analysis.

@@ -15,39 +15,42 @@ async def main():
 
     runner = PerformanceRunner()
 
-    # Define test scenarios
+    # Define test scenarios - 5000 nodes for standard tests
     scenarios = [
-        # Deep tree degradation curve (more granular)
-        TestScenario("deep_10", "deep_10", 10, 1, "deep", 10, 5, 0.9),
+        # Deep tree degradation curve - test much deeper now!
         TestScenario("deep_100", "deep_100", 100, 1, "deep", 10, 5, 0.9),
-        TestScenario("deep_500", "deep_500", 500, 1, "deep", 10, 5, 0.9),
         TestScenario("deep_1k", "deep_1k", 1000, 1, "deep", 10, 5, 0.9),
-        TestScenario("deep_1.3k", "deep_1300", 1300, 1, "deep", 10, 5, 0.9),
-        TestScenario("deep_1.4k", "deep_1400", 1400, 1, "deep", 10, 5, 0.9),
-        # Wide tree breakdown
+        TestScenario("deep_5k", "deep_5k", 5000, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_10k", "deep_10k", 10000, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_20k", "deep_20k", 20000, 1, "deep", 10, 5, 0.9),
+        TestScenario("deep_50k", "deep_50k", 50000, 1, "deep", 10, 5, 0.9),
+        # Wide tree breakdown - test wider trees including 500k
         TestScenario("wide_1k", "wide_1k", 1000, 1, "wide", 20, 5, 0.9),
+        TestScenario("wide_5k", "wide_5k", 5000, 1, "wide", 20, 5, 0.9),
         TestScenario("wide_10k", "wide_10k", 10000, 1, "wide", 20, 5, 0.9),
-        TestScenario("wide_20k", "wide_20k", 20000, 1, "wide", 20, 5, 0.9),
         TestScenario("wide_50k", "wide_50k", 50000, 1, "wide", 20, 5, 0.9),
-        # Forest optimization (smaller scale for better curve)
-        TestScenario("forest_single", "forest_1", 1000, 1, "balanced", 20, 5, 0.9),
-        TestScenario("forest_10", "forest_10", 1000, 10, "balanced", 20, 5, 0.9),
-        TestScenario("forest_50", "forest_50", 1000, 50, "balanced", 20, 5, 0.9),
-        TestScenario("forest_100", "forest_100", 1000, 100, "balanced", 20, 5, 0.9),
-        TestScenario("forest_200", "forest_200", 1000, 200, "balanced", 20, 5, 0.9),
-        # Read/Write interference patterns
-        TestScenario("read_only", "rw_r100", 1000, 1, "balanced", 20, 5, 1.0),
-        TestScenario("mostly_read", "rw_r90", 1000, 1, "balanced", 20, 5, 0.9),
-        TestScenario("balanced_rw", "rw_r50", 1000, 1, "balanced", 20, 5, 0.5),
-        TestScenario("mostly_write", "rw_r10", 1000, 1, "balanced", 20, 5, 0.1),
-        TestScenario("write_only", "rw_r0", 1000, 1, "balanced", 20, 5, 0.0),
-        # Write pattern impact (50% read/write to see interference)
-        TestScenario("insert_only", "wp_insert", 1000, 1, "balanced", 20, 5, 0.5, "simple"),
-        TestScenario("with_moves", "wp_move", 1000, 1, "balanced", 20, 5, 0.5, "move"),
-        # Concurrent writer stress (more writers = more contention)
-        TestScenario("low_contention", "cont_5", 1000, 1, "balanced", 5, 5, 0.5),
-        TestScenario("med_contention", "cont_20", 1000, 1, "balanced", 20, 5, 0.5),
-        TestScenario("high_contention", "cont_50", 1000, 1, "balanced", 50, 5, 0.5),
+        TestScenario("wide_100k", "wide_100k", 100000, 1, "wide", 20, 5, 0.9),
+        TestScenario("wide_500k", "wide_500k", 500000, 1, "wide", 20, 5, 0.9),
+        # Forest optimization - increased to 5000 nodes
+        TestScenario("forest_single", "forest_1", 5000, 1, "balanced", 20, 5, 0.9),
+        TestScenario("forest_10", "forest_10", 5000, 10, "balanced", 20, 5, 0.9),
+        TestScenario("forest_50", "forest_50", 5000, 50, "balanced", 20, 5, 0.9),
+        TestScenario("forest_100", "forest_100", 5000, 100, "balanced", 20, 5, 0.9),
+        TestScenario("forest_200", "forest_200", 5000, 200, "balanced", 20, 5, 0.9),
+        # Read/Write interference patterns - increased to 5000 nodes
+        TestScenario("read_only", "rw_r100", 5000, 1, "balanced", 20, 5, 1.0),
+        TestScenario("mostly_read", "rw_r90", 5000, 1, "balanced", 20, 5, 0.9),
+        TestScenario("balanced_rw", "rw_r50", 5000, 1, "balanced", 20, 5, 0.5),
+        TestScenario("mostly_write", "rw_r10", 5000, 1, "balanced", 20, 5, 0.1),
+        TestScenario("write_only", "rw_r0", 5000, 1, "balanced", 20, 5, 0.0),
+        # Write pattern impact - increased to 5000 nodes
+        TestScenario("insert_simple", "wp_simple", 5000, 1, "balanced", 20, 5, 0.5, "simple"),
+        TestScenario("insert_deep", "wp_deep", 5000, 1, "balanced", 20, 5, 0.5, "deep"),
+        TestScenario("insert_mixed", "wp_mixed", 5000, 1, "balanced", 20, 5, 0.5, "mixed"),
+        # Concurrent writer stress - increased to 5000 nodes
+        TestScenario("low_contention", "cont_5", 5000, 1, "balanced", 5, 5, 0.5),
+        TestScenario("med_contention", "cont_20", 5000, 1, "balanced", 20, 5, 0.5),
+        TestScenario("high_contention", "cont_50", 5000, 1, "balanced", 50, 5, 0.5),
     ]
 
     # Run tests

@@ -3,17 +3,17 @@ from pydantic import BaseModel, Field
 
 class CreateNodeRequest(BaseModel):
     label: str
-    parentId: int | None = Field(None, description="ID of parent node")
+    parentId: str | None = Field(None, description="ID of parent node")
 
 
 class CreateNodeResponse(BaseModel):
-    id: int
+    id: str
     label: str
-    parentId: int | None
+    parentId: str | None
 
 
 class TreeNodeResponse(BaseModel):
-    id: int
+    id: str
     label: str
     children: list["TreeNodeResponse"] = []
 
@@ -21,10 +21,10 @@ class TreeNodeResponse(BaseModel):
 class BulkNodeRequest(BaseModel):
     """Node for bulk insert operation."""
 
-    id: int = Field(..., description="Node ID")
+    id: str = Field(..., description="Node ID")
     label: str = Field(..., description="Node label")
-    parentId: int | None = Field(None, description="Parent node ID")
-    rootId: int | None = Field(None, description="Root node ID")
+    parentId: str | None = Field(None, description="Parent node ID")
+    rootId: str | None = Field(None, description="Root node ID")
 
     class Config:
         # Accept either camelCase or snake_case

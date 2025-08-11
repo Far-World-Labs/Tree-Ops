@@ -7,10 +7,10 @@ def linear_chain(start_id: int, depth: int, prefix: str = "D") -> list[dict[str,
     """Generate a linear chain (deep tree)."""
     return [
         {
-            "id": start_id + i,
+            "id": f"{start_id + i}",
             "label": f"{prefix}{i}",
-            "parentId": start_id + i - 1 if i > 0 else None,
-            "rootId": start_id,
+            "parentId": f"{start_id + i - 1}" if i > 0 else None,
+            "rootId": f"{start_id}",
         }
         for i in range(depth)
     ]
@@ -18,15 +18,15 @@ def linear_chain(start_id: int, depth: int, prefix: str = "D") -> list[dict[str,
 
 def star_tree(start_id: int, width: int, prefix: str = "W") -> list[dict[str, Any]]:
     """Generate a star topology (wide tree)."""
-    nodes = [{"id": start_id, "label": f"{prefix}0", "parentId": None, "rootId": start_id}]
+    nodes = [{"id": f"{start_id}", "label": f"{prefix}0", "parentId": None, "rootId": f"{start_id}"}]
 
     for i in range(1, width + 1):
         nodes.append(
             {
-                "id": start_id + i,
+                "id": f"{start_id + i}",
                 "label": f"{prefix}{i}",
-                "parentId": start_id,
-                "rootId": start_id,
+                "parentId": f"{start_id}",
+                "rootId": f"{start_id}",
             }
         )
 
@@ -40,13 +40,13 @@ def balanced_tree(start_id: int, total_nodes: int, branching: int = 3) -> list[d
 
     nodes = []
     node_id = start_id
-    nodes.append({"id": node_id, "label": f"B{0}", "parentId": None, "rootId": start_id})
+    nodes.append({"id": f"{node_id}", "label": f"B{0}", "parentId": None, "rootId": f"{start_id}"})
 
     if total_nodes == 1:
         return nodes
 
     # Use BFS to create balanced tree
-    parent_queue = [start_id]
+    parent_queue = [f"{start_id}"]
     created = 1
 
     while created < total_nodes and parent_queue:
@@ -59,13 +59,13 @@ def balanced_tree(start_id: int, total_nodes: int, branching: int = 3) -> list[d
             node_id = start_id + created
             nodes.append(
                 {
-                    "id": node_id,
+                    "id": f"{node_id}",
                     "label": f"B{created}",
                     "parentId": parent_id,
-                    "rootId": start_id,
+                    "rootId": f"{start_id}",
                 }
             )
-            parent_queue.append(node_id)
+            parent_queue.append(f"{node_id}")
             created += 1
 
     return nodes

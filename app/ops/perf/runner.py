@@ -27,7 +27,7 @@ class TestScenario:
     concurrent_users: int
     duration_seconds: int
     read_ratio: float
-    write_pattern: str = "simple"  # simple, deep, mixed, delete, move
+    write_pattern: str = "simple"  # simple, deep, mixed
 
 
 @dataclass
@@ -43,6 +43,7 @@ class TestResult:
     requests: int
     rps: float
     success_rate: float
+    errors: int
     p50: float
     p95: float
     p99: float
@@ -88,19 +89,25 @@ class PerformanceRunner:
         # Kill any runaway queries before starting
         self.db_manager.kill_queries(max_age_seconds=3)
 
-        # Reset stats before scenario
-        self.db_manager.reset_stats()
-
         # Clean org data
         async with httpx.AsyncClient(base_url=self.base_url, timeout=30.0) as client:
             await client.delete("/api/tree", headers={"org-id": scenario.org_id})
 
-        # Setup test data
+        # Setup test data (not measured in performance metrics)
+        self.console.print(f"  Setting up {scenario.node_count} nodes...", end="")
+        setup_start = time.time()
         test_data = self._generate_data(scenario)
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
+        async with httpx.AsyncClient(
+            base_url=self.base_url, timeout=300.0
+        ) as client:  # Longer timeout for large datasets
             for i in range(0, len(test_data), 1000):
                 chunk = test_data[i : i + 1000]
                 await client.post("/api/tree/bulk", json=chunk, headers={"org-id": scenario.org_id})
+        setup_time = time.time() - setup_start
+        self.console.print(f" done in {setup_time:.1f}s")
+
+        # Reset stats AFTER setup, before actual test
+        self.db_manager.reset_stats()
 
         # Measure baseline response
         async with httpx.AsyncClient(base_url=self.base_url, timeout=60.0) as client:
@@ -183,6 +190,7 @@ class PerformanceRunner:
             requests=successful + failed,
             rps=rps,
             success_rate=success_rate,
+            errors=failed,
             p50=p50,
             p95=p95,
             p99=p99,
@@ -192,6 +200,24 @@ class PerformanceRunner:
             index_scans=db_stats["idx_scans"],
             seq_scans=db_stats["seq_scans"],
         )
+
+    def _extract_node_ids(self, tree_data: list[dict]) -> list[int]:
+        """Extract all node IDs from nested tree structure."""
+        node_ids = []
+
+        def extract_from_node(node: dict):
+            if "id" in node:
+                # Convert string ID back to int for use in requests
+                node_ids.append(int(node["id"]))
+            if "children" in node and isinstance(node["children"], list):
+                for child in node["children"]:
+                    extract_from_node(child)
+
+        if isinstance(tree_data, list):
+            for tree in tree_data:
+                extract_from_node(tree)
+
+        return node_ids
 
     async def _user_session(
         self,
@@ -212,7 +238,8 @@ class PerformanceRunner:
                 try:
                     resp = await client.get("/api/tree", headers={"org-id": org_id})
                     if resp.status_code == 200:
-                        existing_nodes = [n["id"] for n in resp.json()[:20]]
+                        tree_data = resp.json()
+                        existing_nodes = self._extract_node_ids(tree_data)[:20]
                 except Exception:
                     pass
 
@@ -226,27 +253,21 @@ class PerformanceRunner:
                     if is_read:
                         response = await client.get("/api/tree", headers={"org-id": org_id})
                     else:
-                        # Handle move pattern (30% moves, 70% inserts)
-                        if write_pattern == "move" and len(existing_nodes) > 1 and np.random.random() < 0.3:
-                            # Move a subtree to a different parent
-                            node_id = np.random.choice(existing_nodes)
-                            new_parent = np.random.choice([n for n in existing_nodes if n != node_id])
-                            response = await client.patch(
-                                f"/api/tree/{node_id}", json={"parentId": new_parent}, headers={"org-id": org_id}
-                            )
-                        else:
-                            # Regular insert
-                            parent_id = None
-                            if write_pattern == "deep" and existing_nodes:
-                                parent_id = np.random.choice(existing_nodes)
-                            elif write_pattern == "mixed" and existing_nodes and np.random.random() < 0.5:
-                                parent_id = np.random.choice(existing_nodes)
+                        # Regular insert
+                        parent_id = None
+                        if write_pattern == "deep" and existing_nodes:
+                            parent_id = np.random.choice(existing_nodes)
+                        elif write_pattern == "mixed" and existing_nodes and np.random.random() < 0.5:
+                            parent_id = np.random.choice(existing_nodes)
 
-                            response = await client.post(
-                                "/api/tree",
-                                json={"label": f"Node_{int(time.time() * 1000000)}", "parentId": parent_id},
-                                headers={"org-id": org_id},
-                            )
+                        response = await client.post(
+                            "/api/tree",
+                            json={
+                                "label": f"Node_{int(time.time() * 1000000)}",
+                                "parentId": f"{parent_id}" if parent_id else None,
+                            },
+                            headers={"org-id": org_id},
+                        )
 
                     elapsed_ms = (time.time() - start) * 1000
 
@@ -296,6 +317,7 @@ class PerformanceRunner:
         table.add_column("Trees", justify="right")
         table.add_column("R:W", justify="center")
         table.add_column("RPS", justify="right")
+        table.add_column("Errors", justify="right")
         table.add_column("P50", justify="right")
         table.add_column("P95", justify="right")
         table.add_column("P99", justify="right")
@@ -310,6 +332,7 @@ class PerformanceRunner:
             p95_style = "green" if r.p95 < 200 else "yellow" if r.p95 < 1000 else "red"
             ms_style = "green" if r.ms_per_node < 0.5 else "yellow" if r.ms_per_node < 2 else "red"
             idx_style = "green" if r.index_scans > r.seq_scans else "red"
+            error_style = "green" if r.errors == 0 else "yellow" if r.errors < 10 else "red"
 
             table.add_row(
                 r.scenario_name,
@@ -318,6 +341,7 @@ class PerformanceRunner:
                 str(r.tree_count),
                 r.read_write_ratio,
                 f"[{rps_style}]{r.rps:.1f}[/{rps_style}]",
+                f"[{error_style}]{r.errors}[/{error_style}]",
                 f"{r.p50:.0f}",
                 f"[{p95_style}]{r.p95:.0f}[/{p95_style}]",
                 f"{r.p99:.0f}",
