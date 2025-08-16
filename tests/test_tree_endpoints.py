@@ -60,6 +60,257 @@ async def test_create_root_node(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_move_node_with_children(client: AsyncClient, db_session: AsyncSession):
+    """Test moving a node with multiple levels of children."""
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+
+    # Create a tree structure:
+    # Root 1
+    #   ├── Node A
+    #   │   ├── Node A1
+    #   │   └── Node A2
+    #   └── Node B
+    nodes = [
+        {"id": "1", "label": "Root 1", "parentId": None, "rootId": "1"},
+        {"id": "2", "label": "Node A", "parentId": "1", "rootId": "1"},
+        {"id": "3", "label": "Node A1", "parentId": "2", "rootId": "1"},
+        {"id": "4", "label": "Node A2", "parentId": "2", "rootId": "1"},
+        {"id": "5", "label": "Node B", "parentId": "1", "rootId": "1"},
+    ]
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+
+    # Move Node A (with children A1, A2) under Node B
+    response = await client.post("/api/tree/move", json={"sourceId": "2", "targetId": "5"})
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # Verify the tree structure after move
+    response = await client.get("/api/tree")
+    trees = response.json()
+    assert len(trees) == 1
+
+    # Root 1 should now have only Node B
+    root = trees[0]
+    assert root["id"] == "1"
+    assert len(root["children"]) == 1
+
+    # Node B should contain Node A with its children
+    node_b = root["children"][0]
+    assert node_b["id"] == "5"
+    assert node_b["label"] == "Node B"
+    assert len(node_b["children"]) == 1
+
+    # Node A should be under Node B with its children intact
+    node_a = node_b["children"][0]
+    assert node_a["id"] == "2"
+    assert node_a["label"] == "Node A"
+    assert len(node_a["children"]) == 2
+
+    # Node A's children should still be there
+    child_ids = {child["id"] for child in node_a["children"]}
+    assert child_ids == {"3", "4"}
+
+
+@pytest.mark.asyncio
+async def test_clone_node_with_children(client: AsyncClient, db_session: AsyncSession):
+    """Test cloning a node with multiple levels of children."""
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+
+    # Create a tree structure:
+    # Root 1
+    #   ├── Node A
+    #   │   ├── Node A1
+    #   │   │   └── Node A1a
+    #   │   └── Node A2
+    #   └── Node B
+    nodes = [
+        {"id": "1", "label": "Root 1", "parentId": None, "rootId": "1"},
+        {"id": "2", "label": "Node A", "parentId": "1", "rootId": "1"},
+        {"id": "3", "label": "Node A1", "parentId": "2", "rootId": "1"},
+        {"id": "4", "label": "Node A1a", "parentId": "3", "rootId": "1"},
+        {"id": "5", "label": "Node A2", "parentId": "2", "rootId": "1"},
+        {"id": "6", "label": "Node B", "parentId": "1", "rootId": "1"},
+    ]
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+
+    # Clone Node A (with all its children) under Node B
+    response = await client.post("/api/tree/clone", json={"sourceId": "2", "targetId": "6"})
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    new_node_id = data["id"]
+    assert new_node_id is not None
+    assert new_node_id != "2"  # Should be a new ID
+
+    # Verify the tree structure after clone
+    response = await client.get("/api/tree")
+    trees = response.json()
+    assert len(trees) == 1
+
+    root = trees[0]
+    assert len(root["children"]) == 2  # Node A and Node B
+
+    # Original Node A should still be there with its children
+    original_node_a = next(child for child in root["children"] if child["id"] == "2")
+    assert original_node_a["label"] == "Node A"
+    assert len(original_node_a["children"]) == 2
+
+    # Node B should now have a cloned Node A
+    node_b = next(child for child in root["children"] if child["id"] == "6")
+    assert node_b["label"] == "Node B"
+    assert len(node_b["children"]) == 1
+
+    # Cloned Node A should have the same structure but different IDs
+    cloned_node_a = node_b["children"][0]
+    assert cloned_node_a["id"] == new_node_id
+    assert cloned_node_a["label"] == "Node A"
+    assert len(cloned_node_a["children"]) == 2
+
+    # Verify the cloned children have different IDs
+    cloned_child_labels = {child["label"] for child in cloned_node_a["children"]}
+    assert cloned_child_labels == {"Node A1", "Node A2"}
+
+    # Check that Node A1 has its child (3 levels deep)
+    cloned_a1 = next(child for child in cloned_node_a["children"] if child["label"] == "Node A1")
+    assert len(cloned_a1["children"]) == 1
+    assert cloned_a1["children"][0]["label"] == "Node A1a"
+
+    # Ensure cloned IDs are different from originals
+    original_ids = {"2", "3", "4", "5"}
+    cloned_ids = {cloned_node_a["id"]}
+    for child in cloned_node_a["children"]:
+        cloned_ids.add(child["id"])
+        for grandchild in child.get("children", []):
+            cloned_ids.add(grandchild["id"])
+
+    assert not (original_ids & cloned_ids)  # No overlap
+
+
+@pytest.mark.asyncio
+async def test_move_node_to_root(client: AsyncClient, db_session: AsyncSession):
+    """Test moving a node with children to become a root node."""
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+
+    # Create a tree structure:
+    # Root 1
+    #   └── Node A
+    #       ├── Node A1
+    #       └── Node A2
+    #           └── Node A2a
+    nodes = [
+        {"id": "1", "label": "Root 1", "parentId": None, "rootId": "1"},
+        {"id": "2", "label": "Node A", "parentId": "1", "rootId": "1"},
+        {"id": "3", "label": "Node A1", "parentId": "2", "rootId": "1"},
+        {"id": "4", "label": "Node A2", "parentId": "2", "rootId": "1"},
+        {"id": "5", "label": "Node A2a", "parentId": "4", "rootId": "1"},
+    ]
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+
+    # Move Node A to root level (targetId: null)
+    response = await client.post("/api/tree/move", json={"sourceId": "2", "targetId": None})
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+
+    # Verify we now have two root trees
+    response = await client.get("/api/tree")
+    trees = response.json()
+    assert len(trees) == 2
+
+    # Find the two roots
+    root_1 = next(tree for tree in trees if tree["id"] == "1")
+    root_a = next(tree for tree in trees if tree["id"] == "2")
+
+    # Root 1 should now be empty (no children)
+    assert root_1["label"] == "Root 1"
+    assert len(root_1["children"]) == 0
+
+    # Node A is now a root with its children intact
+    assert root_a["label"] == "Node A"
+    assert len(root_a["children"]) == 2
+
+    # Verify Node A's children are intact
+    child_labels = {child["label"] for child in root_a["children"]}
+    assert child_labels == {"Node A1", "Node A2"}
+
+    # Verify Node A2 still has its child (3 levels deep from new root)
+    node_a2 = next(child for child in root_a["children"] if child["label"] == "Node A2")
+    assert len(node_a2["children"]) == 1
+    assert node_a2["children"][0]["label"] == "Node A2a"
+
+
+@pytest.mark.asyncio
+async def test_clone_node_to_root(client: AsyncClient, db_session: AsyncSession):
+    """Test cloning a node with children to create a new root tree."""
+    await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
+
+    # Create a tree structure:
+    # Root 1
+    #   └── Node A
+    #       ├── Node A1
+    #       │   └── Node A1a
+    #       └── Node A2
+    nodes = [
+        {"id": "1", "label": "Root 1", "parentId": None, "rootId": "1"},
+        {"id": "2", "label": "Node A", "parentId": "1", "rootId": "1"},
+        {"id": "3", "label": "Node A1", "parentId": "2", "rootId": "1"},
+        {"id": "4", "label": "Node A1a", "parentId": "3", "rootId": "1"},
+        {"id": "5", "label": "Node A2", "parentId": "2", "rootId": "1"},
+    ]
+    response = await client.post("/api/tree/bulk", json=nodes)
+    assert response.status_code == 201
+
+    # Clone Node A to root level (targetId: null)
+    response = await client.post("/api/tree/clone", json={"sourceId": "2", "targetId": None})
+    assert response.status_code == 201
+    data = response.json()
+    assert data["success"] is True
+    new_root_id = data["id"]
+    assert new_root_id is not None
+    assert new_root_id != "2"  # Should be a new ID
+
+    # Verify we now have two root trees
+    response = await client.get("/api/tree")
+    trees = response.json()
+    assert len(trees) == 2
+
+    # Find the two roots
+    original_root = next(tree for tree in trees if tree["id"] == "1")
+    cloned_root = next(tree for tree in trees if tree["id"] == new_root_id)
+
+    # Original tree should be unchanged
+    assert original_root["label"] == "Root 1"
+    assert len(original_root["children"]) == 1
+    assert original_root["children"][0]["id"] == "2"
+    assert original_root["children"][0]["label"] == "Node A"
+
+    # Cloned tree should have the same structure but different IDs
+    assert cloned_root["label"] == "Node A"
+    assert len(cloned_root["children"]) == 2
+
+    # Verify cloned children
+    cloned_child_labels = {child["label"] for child in cloned_root["children"]}
+    assert cloned_child_labels == {"Node A1", "Node A2"}
+
+    # Verify Node A1 has its child (3 levels in cloned tree)
+    cloned_a1 = next(child for child in cloned_root["children"] if child["label"] == "Node A1")
+    assert len(cloned_a1["children"]) == 1
+    assert cloned_a1["children"][0]["label"] == "Node A1a"
+
+    # Ensure all cloned IDs are different from originals
+    original_ids = {"2", "3", "4", "5"}
+    cloned_ids = {cloned_root["id"]}
+    for child in cloned_root["children"]:
+        cloned_ids.add(child["id"])
+        for grandchild in child.get("children", []):
+            cloned_ids.add(grandchild["id"])
+
+    assert not (original_ids & cloned_ids)  # No overlap
+
+
+@pytest.mark.asyncio
 async def test_empty_forest(client: AsyncClient, db_session: AsyncSession):
     await db_session.execute(text("TRUNCATE tree_nodes CASCADE"))
 
