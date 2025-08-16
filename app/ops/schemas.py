@@ -53,3 +53,18 @@ class MoveNodeResponse(BaseModel):
 
     success: bool = Field(..., description="Whether the move operation was successful")
     message: str = Field(..., description="Status message")
+
+
+class CloneNodeRequest(BaseModel):
+    """Request model for cloning a node and its subtree to a new location."""
+
+    sourceId: str = Field(..., description="ID of the node to clone")
+    targetId: str | None = Field(None, description="ID of the target parent node (null for root level)")
+
+
+class CloneNodeResponse(BaseModel):
+    """Response model for node clone operation."""
+
+    success: bool = Field(..., description="Whether the clone operation was successful")
+    message: str = Field(..., description="Status message")
+    id: str | None = Field(None, description="ID of the newly created root of the cloned subtree")

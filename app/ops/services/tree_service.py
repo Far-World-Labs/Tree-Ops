@@ -6,7 +6,7 @@ from sqlalchemy import cast, func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ops.entities.tree_node import TreeNode
-from app.ops.schemas import BulkNodeRequest, CreateNodeResponse, MoveNodeResponse
+from app.ops.schemas import BulkNodeRequest, CloneNodeResponse, CreateNodeResponse, MoveNodeResponse
 
 
 @dataclass
@@ -377,6 +377,22 @@ class TreeService:
 
         return created_count
 
+    def _generate_clone_ids(self, nodes: list[TreeNode]) -> dict[int, int]:
+        """
+        Generate new IDs for cloning a subtree.
+
+        Args:
+            nodes: List of nodes to clone
+
+        Returns:
+            Dictionary mapping old IDs to new IDs
+        """
+        old_to_new = {}
+        for node in nodes:
+            new_id = uuid.uuid4().int & 0x7FFFFFFFFFFFFFFF
+            old_to_new[node.id] = new_id
+        return old_to_new
+
     async def delete_all_trees(self) -> None:
         """
         Delete all trees for the current org.
@@ -428,6 +444,8 @@ class TreeService:
             # Get next position under target parent
             next_pos = await self._get_next_position(target_parent_id)
 
+            # TODO: Add max depth validation to prevent exceeding SmallInteger limit
+
             # Build new path information
             if target_parent_id is None:
                 # Moving to root level
@@ -437,16 +455,13 @@ class TreeService:
                 new_depth = 1
             else:
                 # Use target_node we already fetched during validation
-                # target_node is guaranteed to exist here since we checked above
                 assert target_node is not None  # For type checker
                 new_root_id = target_node.root_id
                 new_path_ids = list(target_node.path_ids) + [source_node_id]
                 new_path_pos = list(target_node.path_pos) + [next_pos]
                 new_depth = target_node.depth + 1
 
-            # TODO: Add max depth validation to prevent exceeding SmallInteger limit
-
-            # Get all descendants - use ANY for array membership check
+            # Get all descendants
             descendants_stmt = select(TreeNode.id, TreeNode.path_ids, TreeNode.path_pos, TreeNode.depth).where(
                 (TreeNode.org_id == self.org_id)
                 & (text(":source_id = ANY(path_ids)").bindparams(source_id=source_node_id))
@@ -537,4 +552,142 @@ class TreeService:
 
         return MoveNodeResponse(
             success=True, message=f"Successfully moved node {source_id} to parent {target_id if target_id else 'root'}"
+        )
+
+    async def clone_node(self, source_id: str, target_id: str | None) -> CloneNodeResponse:
+        """
+        Clone a node (and its entire subtree) to a new parent.
+
+        Args:
+            source_id: ID of the node to clone
+            target_id: ID of the new parent node (None for root level)
+
+        Returns:
+            CloneNodeResponse with success status, message, and new node ID
+        """
+        async with self.session.begin():
+            source_node_id = int(source_id)
+            target_parent_id = int(target_id) if target_id else None
+
+            # Get source node
+            source_stmt = select(TreeNode).where((TreeNode.id == source_node_id) & (TreeNode.org_id == self.org_id))
+            source_result = await self.session.execute(source_stmt)
+            source_node = source_result.scalar_one_or_none()
+
+            if not source_node:
+                return CloneNodeResponse(success=False, message=f"Source node {source_id} not found", id=None)
+
+            # Validate target parent exists
+            target_node = None
+            if target_parent_id is not None:
+                target_stmt = select(TreeNode).where(
+                    (TreeNode.id == target_parent_id) & (TreeNode.org_id == self.org_id)
+                )
+                target_result = await self.session.execute(target_stmt)
+                target_node = target_result.scalar_one_or_none()
+
+                if not target_node:
+                    return CloneNodeResponse(
+                        success=False, message=f"Target parent node {target_id} not found", id=None
+                    )
+
+            # Get all nodes in subtree (including source)
+            subtree_stmt = select(TreeNode).where(
+                (TreeNode.org_id == self.org_id)
+                & (text(":source_id = ANY(path_ids)").bindparams(source_id=source_node_id))
+            )
+            subtree_result = await self.session.execute(subtree_stmt)
+            subtree_nodes = subtree_result.scalars().all()
+
+            # Generate new IDs for all nodes
+            old_to_new = self._generate_clone_ids(subtree_nodes)
+            new_source_id = old_to_new[source_node_id]
+
+            # Get next position under target parent
+            next_pos = await self._get_next_position(target_parent_id)
+
+            # Build new root path information
+            if target_parent_id is None:
+                # Cloning to root level
+                new_root_id = new_source_id
+                new_root_path_ids = [new_source_id]
+                new_root_path_pos = [next_pos]
+            else:
+                # Cloning under a parent
+                assert target_node is not None
+                new_root_id = target_node.root_id
+                new_root_path_ids = list(target_node.path_ids) + [new_source_id]
+                new_root_path_pos = list(target_node.path_pos) + [next_pos]
+
+            # Sort nodes by depth to ensure parents are inserted before children
+            sorted_nodes = sorted(subtree_nodes, key=lambda n: n.depth)
+
+            # Build insert data for all new nodes
+            insert_data = []
+            for node in sorted_nodes:
+                # Find position in original subtree
+                source_idx = node.path_ids.index(source_node_id)
+                relative_path = node.path_ids[source_idx:]
+                relative_pos = node.path_pos[source_idx:]
+
+                # Build new path with cloned IDs
+                new_path_ids = new_root_path_ids[:-1]  # Parent path
+                new_path_pos = new_root_path_pos[:-1]
+
+                for i, old_id in enumerate(relative_path):
+                    new_path_ids.append(old_to_new[old_id])
+                    if i == 0:
+                        new_path_pos.append(next_pos)  # Root of clone gets new position
+                    else:
+                        new_path_pos.append(relative_pos[i])  # Keep relative positions
+
+                # Determine parent ID
+                if node.id == source_node_id:
+                    new_parent_id = target_parent_id
+                else:
+                    new_parent_id = old_to_new.get(node.parent_id)
+
+                # Pre-escape label for JSON
+                try:
+                    label_json = json.dumps(node.label, ensure_ascii=False)
+                    json.loads(label_json)  # Verify validity
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    raise ValueError(f"Label '{node.label}' cannot be JSON encoded: {e}")
+
+                insert_data.append(
+                    {
+                        "id": old_to_new[node.id],
+                        "label": node.label,
+                        "parent_id": new_parent_id,
+                        "org_id": self.org_id,
+                        "root_id": new_root_id if target_parent_id else new_source_id,
+                        "pos": next_pos if node.id == source_node_id else node.pos,
+                        "path_ids": new_path_ids,
+                        "path_pos": new_path_pos,
+                        "depth": len(new_path_ids),
+                        "label_json": label_json,
+                    }
+                )
+
+            # Bulk insert all new nodes (sorted by depth ensures parents exist before children)
+            if insert_data:
+                stmt = text(
+                    """
+                    INSERT INTO tree_nodes
+                    (id, label, parent_id, org_id, root_id, pos, path_ids, path_pos, depth, label_json)
+                    VALUES
+                    (:id, :label, :parent_id, :org_id, :root_id, :pos, :path_ids, :path_pos, :depth, :label_json)
+                """
+                )
+                await self.session.execute(stmt, insert_data)
+
+            # Update root timestamp if cloning under existing tree
+            if target_parent_id is not None:
+                root_update = update(TreeNode).where(TreeNode.id == new_root_id).values(updated_at=func.now())
+                await self.session.execute(root_update)
+
+        return CloneNodeResponse(
+            success=True,
+            message=f"Successfully cloned node {source_id} to parent {target_id if target_id else 'root'}",
+            id=str(new_source_id),
         )
