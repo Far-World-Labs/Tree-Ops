@@ -2,11 +2,11 @@ import json
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import cast, func, literal, select, text
+from sqlalchemy import cast, func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ops.entities.tree_node import TreeNode
-from app.ops.schemas import BulkNodeRequest, CreateNodeResponse
+from app.ops.schemas import BulkNodeRequest, CreateNodeResponse, MoveNodeResponse
 
 
 @dataclass
@@ -385,3 +385,156 @@ class TreeService:
         """
         await self.session.execute(text("DELETE FROM tree_nodes WHERE org_id = :org_id"), {"org_id": self.org_id})
         await self.session.commit()
+
+    async def move_node(self, source_id: str, target_id: str | None) -> MoveNodeResponse:
+        """
+        Move a node (and its subtree) to a new parent.
+
+        Args:
+            source_id: ID of the node to move
+            target_id: ID of the new parent node (None for root level)
+
+        Returns:
+            MoveNodeResponse with success status and message
+        """
+        async with self.session.begin():
+            source_node_id = int(source_id)
+            target_parent_id = int(target_id) if target_id else None
+
+            # Get source node
+            source_stmt = select(TreeNode).where((TreeNode.id == source_node_id) & (TreeNode.org_id == self.org_id))
+            source_result = await self.session.execute(source_stmt)
+            source_node = source_result.scalar_one_or_none()
+
+            if not source_node:
+                return MoveNodeResponse(success=False, message=f"Source node {source_id} not found")
+
+            # Validate target parent exists and isn't a descendant
+            target_node = None
+            if target_parent_id is not None:
+                target_stmt = select(TreeNode).where(
+                    (TreeNode.id == target_parent_id) & (TreeNode.org_id == self.org_id)
+                )
+                target_result = await self.session.execute(target_stmt)
+                target_node = target_result.scalar_one_or_none()
+
+                if not target_node:
+                    return MoveNodeResponse(success=False, message=f"Target parent node {target_id} not found")
+
+                # Check if target is a descendant of source
+                if source_node_id in target_node.path_ids:
+                    return MoveNodeResponse(success=False, message="Cannot move node to its own descendant")
+
+            # Get next position under target parent
+            next_pos = await self._get_next_position(target_parent_id)
+
+            # Build new path information
+            if target_parent_id is None:
+                # Moving to root level
+                new_root_id = source_node_id
+                new_path_ids = [source_node_id]
+                new_path_pos = [next_pos]
+                new_depth = 1
+            else:
+                # Use target_node we already fetched during validation
+                # target_node is guaranteed to exist here since we checked above
+                assert target_node is not None  # For type checker
+                new_root_id = target_node.root_id
+                new_path_ids = list(target_node.path_ids) + [source_node_id]
+                new_path_pos = list(target_node.path_pos) + [next_pos]
+                new_depth = target_node.depth + 1
+
+            # TODO: Add max depth validation to prevent exceeding SmallInteger limit
+
+            # Get all descendants - use ANY for array membership check
+            descendants_stmt = select(TreeNode.id, TreeNode.path_ids, TreeNode.path_pos, TreeNode.depth).where(
+                (TreeNode.org_id == self.org_id)
+                & (text(":source_id = ANY(path_ids)").bindparams(source_id=source_node_id))
+                & (TreeNode.id != source_node_id)
+            )
+            descendants_result = await self.session.execute(descendants_stmt)
+            descendants = descendants_result.fetchall()
+
+            # Update source node
+            source_node.parent_id = target_parent_id
+            source_node.root_id = new_root_id
+            source_node.pos = next_pos
+            source_node.path_ids = new_path_ids
+            source_node.path_pos = new_path_pos
+            source_node.depth = new_depth
+
+            # Update descendants - prepare bulk update data
+            if descendants:
+                # Build update data for all descendants at once
+                update_data = []
+                for desc in descendants:
+                    # Find where source appears in descendant's path
+                    old_path_ids = list(desc.path_ids)
+                    try:
+                        source_idx = old_path_ids.index(source_node_id)
+                    except ValueError:
+                        # This shouldn't happen, but log it if it does
+                        print(f"WARNING: Node {source_node_id} not found in descendant {desc.id} path: {old_path_ids}")
+                        continue
+
+                    # Rebuild paths from new parent path
+                    new_desc_path_ids = new_path_ids + old_path_ids[source_idx + 1 :]
+                    new_desc_path_pos = new_path_pos + list(desc.path_pos)[source_idx + 1 :]
+
+                    update_data.append(
+                        {
+                            "desc_id": desc.id,
+                            "new_root_id": new_root_id,
+                            "new_path_ids": new_desc_path_ids,
+                            "new_path_pos": new_desc_path_pos,
+                            "new_depth": len(new_desc_path_ids),
+                        }
+                    )
+
+                # Bulk update using executemany with raw SQL (safe and efficient)
+                if update_data:
+                    # Use executemany for bulk updates - safe and efficient
+                    stmt = text(
+                        """
+                        UPDATE tree_nodes
+                        SET root_id = :new_root_id,
+                            path_ids = :new_path_ids,
+                            path_pos = :new_path_pos,
+                            depth = :new_depth
+                        WHERE id = :desc_id AND org_id = :org_id
+                    """
+                    )
+
+                    # Add org_id to each update record
+                    update_params = [
+                        {
+                            "desc_id": data["desc_id"],
+                            "new_root_id": data["new_root_id"],
+                            "new_path_ids": data["new_path_ids"],
+                            "new_path_pos": data["new_path_pos"],
+                            "new_depth": data["new_depth"],
+                            "org_id": self.org_id,
+                        }
+                        for data in update_data
+                    ]
+
+                    # Execute all updates in a single batch
+                    await self.session.execute(stmt, update_params)
+
+                # Option 2 (alternative): Single UPDATE with CASE statements
+                # This would be even more efficient for very large sets
+                # but is more complex to build dynamically
+
+            # Update root timestamps
+            if source_node.root_id != new_root_id and source_node.parent_id is not None:
+                old_root_update = (
+                    update(TreeNode).where(TreeNode.id == source_node.root_id).values(updated_at=func.now())
+                )
+                await self.session.execute(old_root_update)
+
+            new_root_update = update(TreeNode).where(TreeNode.id == new_root_id).values(updated_at=func.now())
+            await self.session.execute(new_root_update)
+
+        return MoveNodeResponse(
+            success=True, message=f"Successfully moved node {source_id} to parent {target_id if target_id else 'root'}"
+        )

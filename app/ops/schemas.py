@@ -31,11 +31,25 @@ class BulkNodeRequest(BaseModel):
         populate_by_name = True
 
     @property
-    def parent_id(self) -> int | None:
+    def parent_id(self) -> str | None:
         """Get parent_id for internal use."""
         return self.parentId
 
     @property
-    def root_id(self) -> int | None:
+    def root_id(self) -> str | None:
         """Get root_id for internal use."""
         return self.rootId
+
+
+class MoveNodeRequest(BaseModel):
+    """Request model for moving a node from one parent to another."""
+
+    sourceId: str = Field(..., description="ID of the node to move")
+    targetId: str | None = Field(None, description="ID of the target parent node (null for root level)")
+
+
+class MoveNodeResponse(BaseModel):
+    """Response model for node move operation."""
+
+    success: bool = Field(..., description="Whether the move operation was successful")
+    message: str = Field(..., description="Status message")

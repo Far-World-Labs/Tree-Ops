@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.lib.db.session import get_session
-from app.ops.schemas import BulkNodeRequest, CreateNodeRequest, CreateNodeResponse
+from app.ops.schemas import BulkNodeRequest, CreateNodeRequest, CreateNodeResponse, MoveNodeRequest, MoveNodeResponse
 from app.ops.services.tree_service import CreateNodeCommand, TreeService
 
 settings = get_settings()
@@ -30,6 +30,15 @@ async def insert_node(
     service = TreeService(session, org_id=org_id)
     command = CreateNodeCommand(label=request.label, parent_id=request.parentId)
     return await service.insert_node(command)
+
+
+@router.post("/move", response_model=MoveNodeResponse, status_code=status.HTTP_200_OK)
+async def move_node(
+    request: MoveNodeRequest, session: AsyncSession = Depends(get_session), org_id: str | None = Header(None)
+):
+    """Move a node by source_id to target_id"""
+    service = TreeService(session, org_id=org_id)
+    return await service.move_node(request.sourceId, request.targetId)
 
 
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
