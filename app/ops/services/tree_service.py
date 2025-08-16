@@ -6,7 +6,7 @@ from sqlalchemy import cast, func, literal, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ops.entities.tree_node import TreeNode
-from app.ops.schemas import BulkNodeRequest, CloneNodeResponse, CreateNodeResponse, MoveNodeResponse
+from app.ops.schemas import BulkNodeRequest, CreateNodeResponse
 
 
 @dataclass
@@ -402,7 +402,7 @@ class TreeService:
         await self.session.execute(text("DELETE FROM tree_nodes WHERE org_id = :org_id"), {"org_id": self.org_id})
         await self.session.commit()
 
-    async def move_node(self, source_id: str, target_id: str | None) -> MoveNodeResponse:
+    async def move_node(self, source_id: str, target_id: str | None) -> None:
         """
         Move a node (and its subtree) to a new parent.
 
@@ -410,8 +410,8 @@ class TreeService:
             source_id: ID of the node to move
             target_id: ID of the new parent node (None for root level)
 
-        Returns:
-            MoveNodeResponse with success status and message
+        Raises:
+            ValueError: If source node not found, target not found, or invalid move
         """
         async with self.session.begin():
             source_node_id = int(source_id)
@@ -423,7 +423,7 @@ class TreeService:
             source_node = source_result.scalar_one_or_none()
 
             if not source_node:
-                return MoveNodeResponse(success=False, message=f"Source node {source_id} not found")
+                raise ValueError(f"Source node {source_id} not found")
 
             # Validate target parent exists and isn't a descendant
             target_node = None
@@ -435,11 +435,11 @@ class TreeService:
                 target_node = target_result.scalar_one_or_none()
 
                 if not target_node:
-                    return MoveNodeResponse(success=False, message=f"Target parent node {target_id} not found")
+                    raise ValueError(f"Target parent node {target_id} not found")
 
                 # Check if target is a descendant of source
                 if source_node_id in target_node.path_ids:
-                    return MoveNodeResponse(success=False, message="Cannot move node to its own descendant")
+                    raise ValueError("Cannot move node to its own descendant")
 
             # Get next position under target parent
             next_pos = await self._get_next_position(target_parent_id)
@@ -550,11 +550,7 @@ class TreeService:
             new_root_update = update(TreeNode).where(TreeNode.id == new_root_id).values(updated_at=func.now())
             await self.session.execute(new_root_update)
 
-        return MoveNodeResponse(
-            success=True, message=f"Successfully moved node {source_id} to parent {target_id if target_id else 'root'}"
-        )
-
-    async def clone_node(self, source_id: str, target_id: str | None) -> CloneNodeResponse:
+    async def clone_node(self, source_id: str, target_id: str | None) -> str:
         """
         Clone a node (and its entire subtree) to a new parent.
 
@@ -563,7 +559,10 @@ class TreeService:
             target_id: ID of the new parent node (None for root level)
 
         Returns:
-            CloneNodeResponse with success status, message, and new node ID
+            str: ID of the newly created root of the cloned subtree
+
+        Raises:
+            ValueError: If source node not found or target not found
         """
         async with self.session.begin():
             source_node_id = int(source_id)
@@ -575,7 +574,7 @@ class TreeService:
             source_node = source_result.scalar_one_or_none()
 
             if not source_node:
-                return CloneNodeResponse(success=False, message=f"Source node {source_id} not found", id=None)
+                raise ValueError(f"Source node {source_id} not found")
 
             # Validate target parent exists
             target_node = None
@@ -587,9 +586,7 @@ class TreeService:
                 target_node = target_result.scalar_one_or_none()
 
                 if not target_node:
-                    return CloneNodeResponse(
-                        success=False, message=f"Target parent node {target_id} not found", id=None
-                    )
+                    raise ValueError(f"Target parent node {target_id} not found")
 
             # Get all nodes in subtree (including source)
             subtree_stmt = select(TreeNode).where(
@@ -686,8 +683,4 @@ class TreeService:
                 root_update = update(TreeNode).where(TreeNode.id == new_root_id).values(updated_at=func.now())
                 await self.session.execute(root_update)
 
-        return CloneNodeResponse(
-            success=True,
-            message=f"Successfully cloned node {source_id} to parent {target_id if target_id else 'root'}",
-            id=str(new_source_id),
-        )
+        return str(new_source_id)

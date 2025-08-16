@@ -46,7 +46,16 @@ async def move_node(
 ):
     """Move a node by source_id to target_id"""
     service = TreeService(session, org_id=org_id)
-    return await service.move_node(request.sourceId, request.targetId)
+    try:
+        await service.move_node(request.sourceId, request.targetId)
+        return MoveNodeResponse(
+            success=True,
+            message=f"Successfully moved node {request.sourceId} to {'root' if request.targetId is None else f'parent {request.targetId}'}",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{e}")
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to move node: {e}")
 
 
 @router.post("/clone", response_model=CloneNodeResponse, status_code=status.HTTP_201_CREATED)
@@ -55,7 +64,17 @@ async def clone_node(
 ):
     """Clone a node (and its subtree) to a new location"""
     service = TreeService(session, org_id=org_id)
-    return await service.clone_node(request.sourceId, request.targetId)
+    try:
+        new_node_id = await service.clone_node(request.sourceId, request.targetId)
+        return CloneNodeResponse(
+            success=True,
+            message=f"Successfully cloned node {request.sourceId} to {'root' if request.targetId is None else f'parent {request.targetId}'}",
+            id=new_node_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{e}")
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to clone node: {e}")
 
 
 @router.post("/bulk", status_code=status.HTTP_201_CREATED)
